@@ -41,12 +41,12 @@ pub enum TokenKind {
     DoubleEqual,
 
     //Keywords
-    Fn,
+    Func,
     Struct,
     Enum,
-    Union,
     Use,
     Impl,
+    Type,
     If,
     Else,
     Return,
@@ -86,10 +86,9 @@ impl From<&[u8]> for TokenKind {
             b"==" => TokenKind::DoubleEqual,
 
             // Keywords
-            b"fn" => TokenKind::Fn,
+            b"func" => TokenKind::Func,
             b"struct" => TokenKind::Struct,
             b"enum" => TokenKind::Enum,
-            b"union" => TokenKind::Union,
             b"use" => TokenKind::Use,
             b"impl" => TokenKind::Impl,
             b"return" => TokenKind::Return,

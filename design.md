@@ -35,7 +35,7 @@ Examples:
 ## Expressions
 Code that describse ==computation==, but not ==structure==
 Examples:
-- Function or Macro Call
+- Function or Macro Calls
 - Math
 
 ---
@@ -106,14 +106,14 @@ Vec :: struct<T> {
     impl Iterator {
         type Item = T;
 
-        next :: func(&self) &Self::Item { ... }
+        next :: func(&self) &Self.Item { ... }
     }
 }
 
 Iterator :: trait {
     type Item;
 
-    next :: func(&self) &Self::Item { ... }
+    next :: func(&self) &Self.Item { ... }
 }
 ```
 ---

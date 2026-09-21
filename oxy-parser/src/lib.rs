@@ -1,9 +1,10 @@
 #![allow(unused)]
 
-use crate::{ast::AstParseError, tokens::{Token, TokenKind}};
+use crate::{parser::AstParseError, tokens::{Token, TokenKind}};
 use std::{ops::Range, str::FromStr};
 
 pub mod ast;
+pub mod parser;
 pub mod tokens;
 pub mod types;
 
@@ -18,15 +19,35 @@ impl Lexer {
         self.start..self.end
     }
 
-    pub fn expect(&mut self, input: &[u8], expect: TokenKind, on_err: AstParseError) -> Result<(), AstParseError> {
+    // Checks the next token and moves forward
+    pub fn expect(&mut self, input: &[u8], expect: TokenKind) -> Result<(), AstParseError> {
         if !self.next(input).is_some_and(|t| t.kind == expect) {
-            return Err(on_err)
+            return Err(AstParseError::ExpectedSymbol(expect))
         }
         Ok(())
     } 
 
-    fn peek(&self, input: &[u8]) -> Option<u8> {
-        let peek = self.end + 1;
+    pub fn get_current<'a>(&self, input: &'a [u8]) -> &'a [u8] {
+        &input[self.start..self.end]
+    }
+
+    pub fn look_ahead(&self, input: &[u8], distance: usize) -> Vec<Option<Token>> {
+        let mut tokens = Vec::new();
+        let mut start = self.start;
+        let mut end = self.end;
+
+
+        for _ in 0..distance {
+            start = end;
+            let t = Self::next_inner(&mut start, &mut end, input).map(|_| Self::current_token(start, end, input));
+            tokens.push(t);
+        }
+
+        tokens
+    }
+
+    fn peek(end: usize, input: &[u8]) -> Option<u8> {
+        let peek = end + 1;
         if peek >= input.len() {
             return None;
         }
@@ -34,60 +55,72 @@ impl Lexer {
         Some(input[peek])
     }
 
-    pub fn next(&mut self, input: &[u8]) -> Option<Token> {
-        self.start = self.end;
-
+    fn next_inner(start: &mut usize, end: &mut usize, input: &[u8]) -> Option<()> {
         loop {
-            if self.end >= input.len() {
-                self.end = self.end.saturating_sub(1);
+            if *end >= input.len() {
+                *end = end.saturating_sub(1);
                 return None;
             }
 
-            let ch = input[self.end] as char;
+            let ch = input[*end] as char;
             if ch.is_ascii_whitespace() {
                 if ch == '\n' {
-                    if self.start == self.end {
+                    if *start == *end {
                         break;
                     }
-                    self.end -= 1;
+                    *end -= 1;
                     break;
                 }
-                if self.start == self.end {
-                    self.end += 1;
-                    self.start += 1;
+                if *start == *end {
+                    *end += 1;
+                    *start += 1;
                     continue;
                 } else {
-                    self.end -= 1;
+                    *end -= 1;
                     break;
                 }
             }
 
             if ch.is_ascii_punctuation() {
-                if self.start == self.end {
-                    if [':', '/', '='].contains(&ch) && self.peek(input).is_some_and(|c| c == ch as u8) {
-                        self.end += 1;
+                if *start == *end {
+                    if [':', '/', '='].contains(&ch) && Self::peek(*end, input).is_some_and(|c| c == ch as u8) {
+                        *end += 1;
                     }
 
                     break;
                 }
-                self.end -= 1;
+                *end -= 1;
                 break;
             }
 
-            self.end += 1;
+            *end += 1;
         }
 
-        let bytes = &input[self.start..=self.end];
+        Some(())
+
+    }
+
+    fn current_token(start: usize, end: usize, input: &[u8]) -> Token {
+        let bytes = &input[start..=end];
         let kind = TokenKind::from(bytes);
 
-        self.end += 1;
-
-        Some(Token {
+        Token {
             kind,
             #[cfg(test)]
             str: String::from_utf8_lossy(bytes).to_string(),
-        })
+        }
+    }
 
+    pub fn next(&mut self, input: &[u8]) -> Option<Token> {
+        self.start = self.end;
+
+        Self::next_inner(&mut self.start, &mut self.end, input)?;
+
+        let token = Self::current_token(self.start, self.end, input);
+
+        self.end += 1;
+
+        Some(token)
     }
 }
 
@@ -120,23 +153,23 @@ mod tests {
 
     #[test]
     fn parse_fn_item() {
-        let input = "add :: fn(a: u8, b: u8) u8 {\nreturn a + b;\n}";
+        let input = "add :: func(a: u16, b: u16) u16 {\n return a + b; \n}";
         let lexer = LexerTest::new(input.as_bytes());
 
         let expected: Vec<Token> = [
             (TokenKind::Text, "add"),
             (TokenKind::DoubleColon, "::"),
-            (TokenKind::Fn, "fn"),
+            (TokenKind::Func, "func"),
             (TokenKind::LParen, "("),
             (TokenKind::Text, "a"),
             (TokenKind::Colon, ":"),
-            (TokenKind::Text, "u8"),
+            (TokenKind::Text, "u16"),
             (TokenKind::Comma, ","),
             (TokenKind::Text, "b"),
             (TokenKind::Colon, ":"),
-            (TokenKind::Text, "u8"),
+            (TokenKind::Text, "u16"),
             (TokenKind::RParen, ")"),
-            (TokenKind::Text, "u8"),
+            (TokenKind::Text, "u16"),
             (TokenKind::LCurly, "{"),
             (TokenKind::Newline, "\n"),
             (TokenKind::Return, "return"),
@@ -220,35 +253,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_union_item() {
-        let input = b"Foo :: union {\nIoError,\nMapError\n}\n";
-        let lexer = LexerTest::new(input);
-
-        let expected: Vec<Token> = [
-            (TokenKind::Text, "Foo"),
-            (TokenKind::DoubleColon, "::"),
-            (TokenKind::Union, "union"),
-            (TokenKind::LCurly, "{"),
-            (TokenKind::Newline, "\n"),
-            (TokenKind::Text, "IoError"),
-            (TokenKind::Comma, ","),
-            (TokenKind::Newline, "\n"),
-            (TokenKind::Text, "MapError"),
-            (TokenKind::Newline, "\n"),
-            (TokenKind::RCurly, "}"),
-            (TokenKind::Newline, "\n"),
-        ]
-        .into_iter()
-        .map(|(kind, str)| Token {
-            kind,
-            str: String::from_utf8_lossy(str.as_bytes()).to_string(),
-        })
-        .collect();
-
-        assert_eq!(expected, lexer.collect::<Vec<Token>>());
-    }
-
-    #[test]
     fn parse_comment_item() {
         let input = b"Foo :: struct { // Foo\nx: u8}";
         let lexer = LexerTest::new(input);
@@ -281,5 +285,31 @@ mod tests {
         let input = "";
         let lexer = LexerTest::new(input.as_bytes());
         assert!(lexer.collect::<Vec<Token>>().is_empty())
+    }
+
+    #[test]
+    fn lexer_look_ahead() {
+        let input = "add :: func".as_bytes();
+        let mut lexer = Lexer::default();
+
+        assert_eq!(Some(Token {
+            kind: TokenKind::Text,
+            str: String::from("add"),
+        }), lexer.next(&input));
+
+        let look_ahead_vec = lexer.look_ahead(&input, 3);
+        let expected = vec![
+            Some(Token{
+                kind: TokenKind::DoubleColon,
+                str: String::from("::"),
+            }),
+            Some(Token {
+                kind: TokenKind::Func,
+                str: String::from("func"),
+            }),
+            None
+        ];
+
+        assert_eq!(expected, look_ahead_vec)
     }
 }
