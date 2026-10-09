@@ -1,17 +1,20 @@
 #![allow(unused)]
 
-use crate::{parser::AstParseError, tokens::{Token, TokenKind}};
+use crate::tokens::{Token, TokenKind};
 use std::{ops::Range, str::FromStr};
 
-pub mod ast;
-pub mod parser;
 pub mod tokens;
-pub mod types;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("Expected {0}")]
+    ExpectedSymbol(TokenKind),
+}
 
 #[derive(Default)]
 pub struct Lexer {
-    start: usize,
-    end: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 impl Lexer {
@@ -20,9 +23,9 @@ impl Lexer {
     }
 
     // Checks the next token and moves forward
-    pub fn expect(&mut self, input: &[u8], expect: TokenKind) -> Result<(), AstParseError> {
+    pub fn expect(&mut self, input: &[u8], expect: TokenKind) -> Result<(), ParseError> {
         if !self.next(input).is_some_and(|t| t.kind == expect) {
-            return Err(AstParseError::ExpectedSymbol(expect))
+            return Err(ParseError::ExpectedSymbol(expect))
         }
         Ok(())
     } 
@@ -35,12 +38,19 @@ impl Lexer {
         let mut tokens = Vec::new();
         let mut start = self.start;
         let mut end = self.end;
+        let mut is_end = false;
 
 
         for _ in 0..distance {
             start = end;
-            let t = Self::next_inner(&mut start, &mut end, input).map(|_| Self::current_token(start, end, input));
-            tokens.push(t);
+            let t = Self::next_inner(&mut start, &mut end, input);
+            if t.is_none() && !is_end {
+                is_end = true;
+                tokens.push(Some(Self::current_token(start, end, input)));
+            } else {
+                tokens.push(t.map(|_| Self::current_token(start, end, input)));
+            }
+            end += 1;
         }
 
         tokens

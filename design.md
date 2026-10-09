@@ -110,6 +110,8 @@ Vec :: struct<T> {
     }
 }
 
+generic_add :: func<T>(a: T, b: T) T { ... }
+
 Iterator :: trait {
     type Item;
 
