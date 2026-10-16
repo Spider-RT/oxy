@@ -12,125 +12,105 @@ pub enum ParseError {
 }
 
 #[derive(Default)]
-pub struct Lexer {
-    pub(crate) start: usize,
-    pub(crate) end: usize,
+pub struct LexerCounter {
+    start: usize,
+    end: usize,
 }
 
-impl Lexer {
-    pub fn get_ref_range(&self) -> Range<usize> {
+impl LexerCounter {
+    #[inline(always)]
+    pub fn range(&self) -> Range<usize> {
         self.start..self.end
     }
 
-    // Checks the next token and moves forward
-    pub fn expect(&mut self, input: &[u8], expect: TokenKind) -> Result<(), ParseError> {
-        if !self.next(input).is_some_and(|t| t.kind == expect) {
-            return Err(ParseError::ExpectedSymbol(expect))
-        }
-        Ok(())
-    } 
-
-    pub fn get_current<'a>(&self, input: &'a [u8]) -> &'a [u8] {
-        &input[self.start..self.end]
+    #[inline(always)]
+    pub fn advance(&mut self) {
+        self.start += 1;
+        self.end += 1;
     }
 
-    pub fn look_ahead(&self, input: &[u8], distance: usize) -> Vec<Option<Token>> {
-        let mut tokens = Vec::new();
-        let mut start = self.start;
-        let mut end = self.end;
-        let mut is_end = false;
-
-
-        for _ in 0..distance {
-            start = end;
-            let t = Self::next_inner(&mut start, &mut end, input);
-            if t.is_none() && !is_end {
-                is_end = true;
-                tokens.push(Some(Self::current_token(start, end, input)));
-            } else {
-                tokens.push(t.map(|_| Self::current_token(start, end, input)));
-            }
-            end += 1;
-        }
-
-        tokens
+    #[inline(always)]
+    pub fn has_moved(&self) -> bool {
+        self.start != self.end
     }
 
-    fn peek(end: usize, input: &[u8]) -> Option<u8> {
-        let peek = end + 1;
-        if peek >= input.len() {
-            return None;
-        }
+    #[inline(always)]
+    pub fn align(&mut self) {
+        self.start = self.end;
+    }
+}
 
-        Some(input[peek])
+pub struct Lexer<'a> {
+    counter: LexerCounter,
+    input: &'a [u8],
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(input: &'a [u8]) -> Self {
+        Self {
+            input,
+            counter: LexerCounter::default(),
+        }
     }
 
-    fn next_inner(start: &mut usize, end: &mut usize, input: &[u8]) -> Option<()> {
+    pub fn next_is_same(&self, pattern: &u8) -> bool {
+        self.input.get(self.counter.end + 1).is_some_and(|next| next == pattern)
+    }
+}
+
+impl<'a> Iterator for Lexer<'a> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.counter.align();
+
         loop {
-            if *end >= input.len() {
-                *end = end.saturating_sub(1);
-                return None;
-            }
-
-            let ch = input[*end] as char;
-            if ch.is_ascii_whitespace() {
-                if ch == '\n' {
-                    if *start == *end {
-                        break;
-                    }
-                    *end -= 1;
-                    break;
+            if self.counter.end >= self.input.len() {
+                if !self.counter.has_moved() {
+                    return None;
                 }
-                if *start == *end {
-                    *end += 1;
-                    *start += 1;
-                    continue;
-                } else {
-                    *end -= 1;
-                    break;
-                }
-            }
 
-            if ch.is_ascii_punctuation() {
-                if *start == *end {
-                    if [':', '/', '='].contains(&ch) && Self::peek(*end, input).is_some_and(|c| c == ch as u8) {
-                        *end += 1;
-                    }
-
-                    break;
-                }
-                *end -= 1;
                 break;
             }
 
-            *end += 1;
+            let ch = self.input[self.counter.end];
+
+            if ch.is_ascii_whitespace() && ch != b'\n' {
+                if !self.counter.has_moved() {
+                    self.counter.advance();
+                    continue;
+                }
+
+                break;
+            }
+
+            if !ch.is_ascii_alphanumeric() {
+                if !self.counter.has_moved() {
+                    if self.next_is_same(&ch) {
+                        self.counter.end += 2;
+                        break;
+                    }
+
+                    self.counter.end += 1;
+                    break;
+                }
+
+                break;
+            }
+            
+            self.counter.end += 1;
         }
 
-        Some(())
+        let slice = &self.input[self.counter.range()];
+        let kind = TokenKind::from(slice);
 
-    }
-
-    fn current_token(start: usize, end: usize, input: &[u8]) -> Token {
-        let bytes = &input[start..=end];
-        let kind = TokenKind::from(bytes);
-
-        Token {
+        let token = Token {
             kind,
             #[cfg(test)]
-            str: String::from_utf8_lossy(bytes).to_string(),
-        }
-    }
+            str: String::from_utf8_lossy(slice).to_string(),
+        };
 
-    pub fn next(&mut self, input: &[u8]) -> Option<Token> {
-        self.start = self.end;
-
-        Self::next_inner(&mut self.start, &mut self.end, input)?;
-
-        let token = Self::current_token(self.start, self.end, input);
-
-        self.end += 1;
-
-        Some(token)
+        return Some(token)
     }
 }
 
@@ -138,33 +118,17 @@ impl Lexer {
 mod tests {
     use super::*;
     use crate::tokens::{Token, TokenKind};
+    use pretty_assertions::assert_eq;
 
-    struct LexerTest<'a> {
-        input: &'a [u8],
-        lexer: Lexer,
-    }
-
-    impl<'a> LexerTest<'a> {
-        fn new(input: &'a [u8]) -> Self {
-            Self {
-                input,
-                lexer: Lexer::default(),
-            }
-        }
-    }
-
-    impl<'a> Iterator for LexerTest<'a> {
-        type Item = Token;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            self.lexer.next(self.input)
-        }
+    #[test]
+    fn lexer_single_item() {
+        let input = "hello";
     }
 
     #[test]
-    fn parse_fn_item() {
-        let input = "add :: func(a: u16, b: u16) u16 {\n return a + b; \n}";
-        let lexer = LexerTest::new(input.as_bytes());
+    fn lexer_parse_fn_item() {
+        let input = b"add :: func(a: u16, b: u16) u16 {\n return a + b; \n}";
+        let lexer = Lexer::new(input);
 
         let expected: Vec<Token> = [
             (TokenKind::Text, "add"),
@@ -201,9 +165,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_struct_item() {
+    fn lexer_parse_struct_item() {
         let input = b"Foo :: struct {\nx: u8,\ny: u8\n}\n";
-        let lexer = LexerTest::new(input);
+        let lexer = Lexer::new(input);
 
         let expected: Vec<Token> = [
             (TokenKind::Text, "Foo"),
@@ -234,9 +198,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_enum_item() {
+    fn lexer_parse_enum_item() {
         let input = b"Foo :: enum {\nIoError,\nMapError\n}\n";
-        let lexer = LexerTest::new(input);
+        let lexer = Lexer::new(input);
 
         let expected: Vec<Token> = [
             (TokenKind::Text, "Foo"),
@@ -263,9 +227,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_comment_item() {
+    fn lexer_parse_comment_item() {
         let input = b"Foo :: struct { // Foo\nx: u8}";
-        let lexer = LexerTest::new(input);
+        let lexer = Lexer::new(input);
 
         let expected: Vec<Token> = [
             (TokenKind::Text, "Foo"),
@@ -291,35 +255,9 @@ mod tests {
     }
 
     #[test]
-    fn skip_empty_input() {
+    fn lexer_skip_empty_input() {
         let input = "";
-        let lexer = LexerTest::new(input.as_bytes());
+        let lexer = Lexer::new(input.as_bytes());
         assert!(lexer.collect::<Vec<Token>>().is_empty())
-    }
-
-    #[test]
-    fn lexer_look_ahead() {
-        let input = "add :: func".as_bytes();
-        let mut lexer = Lexer::default();
-
-        assert_eq!(Some(Token {
-            kind: TokenKind::Text,
-            str: String::from("add"),
-        }), lexer.next(&input));
-
-        let look_ahead_vec = lexer.look_ahead(&input, 3);
-        let expected = vec![
-            Some(Token{
-                kind: TokenKind::DoubleColon,
-                str: String::from("::"),
-            }),
-            Some(Token {
-                kind: TokenKind::Func,
-                str: String::from("func"),
-            }),
-            None
-        ];
-
-        assert_eq!(expected, look_ahead_vec)
     }
 }

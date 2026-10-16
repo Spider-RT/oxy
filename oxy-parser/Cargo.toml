@@ -7,3 +7,6 @@ edition = "2024"
 anyhow = "1.0.104"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
